@@ -4421,7 +4421,7 @@ App.creditCards = {
       }
     }
 
-    App.ui.closeModal('modalCreditCard'); App.utils.showToast(id ? 'Atualizado!' : 'Criado!'); this.load(); return false;
+    App.ui.closeModal('modalCreditCard'); App.utils.showToast(id ? 'Atualizado!' : 'Criado!'); this.load(); if (App.cardSheet && App.ui?._currentPage === 'card-sheet') { App.cardSheet.selectedCardId = cardData.id; App.cardSheet.load(); } return false;
   },
   async payBill(cardId) {
     const card = await App.db.getById('creditCards', cardId);

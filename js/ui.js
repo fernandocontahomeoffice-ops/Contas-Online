@@ -41,6 +41,7 @@ var App = window.App || {};
         'search': () => App.search.load(),
         'extracts': () => App.extracts.load(),
         'credit-cards': () => App.creditCards.load(),
+        'card-sheet': () => App.cardSheet && App.cardSheet.load(),
         'installments': () => App.installments.load(),
         'investments': () => App.investments.load(),
         'patrimony': () => App.patrimony.load(),

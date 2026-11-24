@@ -483,6 +483,96 @@ app.post('/api/ai/chat', async (req, res) => {
   }
 });
 
+function resolveSafeGithubXlsxUrl(inputUrl) {
+  const raw = String(inputUrl || '').trim();
+  if (!raw) return { ok: false, error: 'Informe a URL do arquivo no GitHub.' };
+  let parsed;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    return { ok: false, error: 'URL inválida.' };
+  }
+  if (parsed.protocol !== 'https:') {
+    return { ok: false, error: 'Apenas URLs HTTPS do GitHub são permitidas.' };
+  }
+  const host = parsed.hostname.toLowerCase();
+  let finalUrl = '';
+  if (host === 'raw.githubusercontent.com') {
+    const segments = parsed.pathname.split('/').filter(Boolean);
+    if (segments.length < 4) return { ok: false, error: 'URL raw do GitHub incompleta.' };
+    finalUrl = `https://raw.githubusercontent.com/${segments.join('/')}`;
+  } else if (host === 'github.com' || host === 'www.github.com') {
+    const segments = parsed.pathname.split('/').filter(Boolean);
+    if (segments.length >= 5 && (segments[2] === 'blob' || segments[2] === 'raw')) {
+      finalUrl = `https://raw.githubusercontent.com/${segments[0]}/${segments[1]}/${segments.slice(3).join('/')}`;
+    } else {
+      return {
+        ok: false,
+        error: 'Use o link direto do arquivo no GitHub (ex: https://github.com/usuario/repo/blob/main/testecartao.xlsx).'
+      };
+    }
+  } else {
+    return { ok: false, error: 'Apenas links de github.com ou raw.githubusercontent.com são permitidos.' };
+  }
+  if (!/\.(xlsx|xls|csv)$/i.test(finalUrl)) {
+    return { ok: false, error: 'O link precisa apontar para um arquivo .xlsx, .xls ou .csv.' };
+  }
+  return { ok: true, rawUrl: finalUrl };
+}
+
+app.get('/api/github/fetch-xlsx', async (req, res) => {
+  const checked = resolveSafeGithubXlsxUrl(req.query?.url);
+  if (!checked.ok) {
+    return res.status(400).json({ error: checked.error });
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10000);
+
+  try {
+    const upstream = await fetch(checked.rawUrl, {
+      method: 'GET',
+      redirect: 'follow',
+      signal: controller.signal,
+      headers: {
+        'User-Agent': 'ContasOnline-SheetSync/1.0'
+      }
+    });
+
+    if (!upstream.ok) {
+      const msg = upstream.status === 404
+        ? 'Arquivo não encontrado no GitHub (verifique se o repositório é público e o caminho está correto).'
+        : `GitHub retornou HTTP ${upstream.status}.`;
+      return res.status(upstream.status === 404 ? 404 : 502).json({ error: msg });
+    }
+
+    const contentLength = parseInt(upstream.headers.get('content-length') || '0', 10);
+    if (contentLength > 5 * 1024 * 1024) {
+      return res.status(413).json({ error: 'Arquivo excede o limite de 5 MB.' });
+    }
+
+    const arrayBuf = await upstream.arrayBuffer();
+    if (arrayBuf.byteLength > 5 * 1024 * 1024) {
+      return res.status(413).json({ error: 'Arquivo excede o limite de 5 MB.' });
+    }
+
+    const fileName = path.basename(new URL(checked.rawUrl).pathname) || 'testecartao.xlsx';
+    res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader('X-Resolved-Filename', encodeURIComponent(fileName));
+    res.setHeader('Cache-Control', 'no-store');
+    return res.send(Buffer.from(arrayBuf));
+  } catch (err) {
+    const isAbort = err && err.name === 'AbortError';
+    return res.status(isAbort ? 504 : 502).json({
+      error: isAbort
+        ? 'Tempo esgotado ao baixar o arquivo do GitHub.'
+        : 'Não foi possível acessar o arquivo no GitHub. Verifique a URL e se o repositório é público.'
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
+});
+
 // Serve static files from the current directory
 app.use(express.static(__dirname));
 
